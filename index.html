@@ -598,7 +598,9 @@
   const READONLY = new URLSearchParams(window.location.search).get('view') === '1';
 
   async function loadItinerary(){
-    const res = await fetch(JSONBIN_URL + "/latest");
+    const res = await fetch(JSONBIN_URL + "/latest", {
+      headers: { "X-Access-Key": JSONBIN_KEY }
+    });
     if (!res.ok) throw new Error("load failed: " + res.status);
     const json = await res.json();
     return json.record;
