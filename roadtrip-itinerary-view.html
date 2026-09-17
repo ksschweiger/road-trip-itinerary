@@ -52,7 +52,20 @@
   .topbar .trip-dates{
     font-size:12px;
     opacity:0.65;
+    flex:1 1 auto;
+    margin-left:8px;
   }
+  .settings-btn{
+    flex:0 0 auto;
+    background:none;
+    border:none;
+    color:var(--paper);
+    opacity:0.55;
+    font-size:15px;
+    cursor:pointer;
+    padding:2px 4px;
+  }
+  .settings-btn:active{opacity:1;}
 
   /* ---------- Pager ---------- */
   .pager{
@@ -488,6 +501,9 @@
     opacity:0.55;
     margin-top:8px;
   }
+  .modal button.modal-danger{
+    background:#8a2e20;
+  }
 
   [contenteditable="true"]{cursor:text;}
   [contenteditable="true"]:focus{outline:none;background:var(--paper-soft);border-radius:2px;}
@@ -500,8 +516,9 @@
 
 <div class="app">
   <div class="topbar">
-    <span class="trip-name">Denver &rarr; Vegas</span>
-    <span class="trip-dates" id="tripDates">Oct 22&ndash;26</span>
+    <span class="trip-name" id="tripName">Trip</span>
+    <span class="trip-dates" id="tripDates"></span>
+    <button class="settings-btn" id="settingsBtn" aria-label="Trip settings">&#9881;</button>
   </div>
 
   <div class="pager" id="pager"></div>
@@ -529,6 +546,26 @@
     <input id="linkUrlInput" type="url" placeholder="https://example.com">
     <button id="linkConfirmBtn">Save link</button>
     <button id="linkCancelBtn" class="modal-secondary">Cancel</button>
+  </div>
+</div>
+
+<div class="modal-veil" id="settingsVeil" style="display:none;">
+  <div class="modal">
+    <h2 id="settingsTitle">Set up your trip</h2>
+    <input id="settingsNameInput" type="text" placeholder="Trip name" maxlength="60">
+    <input id="settingsStartInput" type="date">
+    <input id="settingsEndInput" type="date">
+    <button id="settingsSaveBtn">Save</button>
+    <button id="settingsCancelBtn" class="modal-secondary">Cancel</button>
+  </div>
+</div>
+
+<div class="modal-veil" id="confirmVeil" style="display:none;">
+  <div class="modal">
+    <h2>Remove these days?</h2>
+    <p id="confirmBody"></p>
+    <button id="confirmYesBtn" class="modal-danger">Remove them</button>
+    <button id="confirmNoBtn" class="modal-secondary">Cancel</button>
   </div>
 </div>
 
@@ -591,7 +628,9 @@
 
   const NAME_KEY = "roadtrip-vegas-username-v1";
 
-  const JSONBIN_ID = "6aa963adac6210605ad0ee9d";
+  const urlParams = new URLSearchParams(window.location.search);
+  const DEFAULT_JSONBIN_ID = "6aa963adac6210605ad0ee9d";
+  const JSONBIN_ID = urlParams.get('bin') || DEFAULT_JSONBIN_ID;
   const JSONBIN_KEY = "$2a$10$jJazxmX5NBU61UhW6pEhL./sUw50BotFpjcYqgZFRXvsw12IVe7g.";
   const JSONBIN_URL = "https://api.jsonbin.io/v3/b/" + JSONBIN_ID;
 
@@ -620,6 +659,7 @@
   }
 
   let days = null;
+  let tripMeta = { name: '', startDate: '', endDate: '' };
   let currentIndex = 0;
   let myName = null;
   let saveTimer = null;
@@ -632,6 +672,20 @@
   const nameVeil = document.getElementById('nameVeil');
   const nameInput = document.getElementById('nameInput');
   const nameSave = document.getElementById('nameSave');
+  const tripNameEl = document.getElementById('tripName');
+  const tripDatesEl = document.getElementById('tripDates');
+  const settingsBtn = document.getElementById('settingsBtn');
+  const settingsVeil = document.getElementById('settingsVeil');
+  const settingsTitle = document.getElementById('settingsTitle');
+  const settingsNameInput = document.getElementById('settingsNameInput');
+  const settingsStartInput = document.getElementById('settingsStartInput');
+  const settingsEndInput = document.getElementById('settingsEndInput');
+  const settingsSaveBtn = document.getElementById('settingsSaveBtn');
+  const settingsCancelBtn = document.getElementById('settingsCancelBtn');
+  const confirmVeil = document.getElementById('confirmVeil');
+  const confirmBody = document.getElementById('confirmBody');
+  const confirmYesBtn = document.getElementById('confirmYesBtn');
+  const confirmNoBtn = document.getElementById('confirmNoBtn');
 
   function makeId(){
     return 'e' + Math.random().toString(36).slice(2, 9);
@@ -762,7 +816,14 @@
     clearTimeout(saveTimer);
     saveTimer = setTimeout(async ()=>{
       try{
-        await saveItinerary({days, lastEditedBy: myName, lastEditedAt: Date.now()});
+        await saveItinerary({
+          tripName: tripMeta.name,
+          startDate: tripMeta.startDate,
+          endDate: tripMeta.endDate,
+          days,
+          lastEditedBy: myName,
+          lastEditedAt: Date.now()
+        });
         showStatus('Saved', false, 1200);
       }catch(e){
         console.error('save failed', e);
@@ -770,6 +831,142 @@
       }
     }, 500);
   }
+
+  function updateTopBar(){
+    tripNameEl.textContent = tripMeta.name || 'Trip';
+    if (tripMeta.startDate && tripMeta.endDate){
+      const s = fmtDateShort(tripMeta.startDate).replace(/^\w+,\s/, '');
+      const en = fmtDateShort(tripMeta.endDate).replace(/^\w+,\s/, '');
+      tripDatesEl.textContent = s + '\u2013' + en;
+    } else {
+      tripDatesEl.textContent = '';
+    }
+  }
+
+  function dateRange(startStr, endStr){
+    const out = [];
+    let d = new Date(startStr + "T12:00:00");
+    const endD = new Date(endStr + "T12:00:00");
+    if (isNaN(d) || isNaN(endD) || d > endD) return out;
+    while (d <= endD){
+      out.push(d.toISOString().slice(0,10));
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
+
+  function blankDay(dateStr){
+    return { date: dateStr, title:'', narrative:'', events: [] };
+  }
+
+  function dayHasContent(day){
+    return !!(day.title && day.title.trim()) ||
+           !!(day.narrative && day.narrative.trim()) ||
+           (day.events && day.events.length > 0);
+  }
+
+  // ---- Confirm modal (generic yes/no) ----
+  let confirmCtx = null;
+  function openConfirm(message, onYes){
+    confirmBody.textContent = message;
+    confirmCtx = onYes;
+    confirmVeil.style.display = 'flex';
+  }
+  function closeConfirm(){
+    confirmVeil.style.display = 'none';
+    confirmCtx = null;
+  }
+  confirmYesBtn.addEventListener('click', ()=>{
+    const fn = confirmCtx;
+    closeConfirm();
+    if (fn) fn();
+  });
+  confirmNoBtn.addEventListener('click', closeConfirm);
+
+  // ---- Trip setup / settings ----
+  let settingsModalMode = 'setup';
+
+  function openSettingsModal(mode){
+    settingsModalMode = mode;
+    if (mode === 'setup'){
+      settingsTitle.textContent = 'Set up your trip';
+      settingsNameInput.value = '';
+      settingsStartInput.value = '';
+      settingsEndInput.value = '';
+      settingsCancelBtn.style.display = 'none';
+    } else {
+      settingsTitle.textContent = 'Trip settings';
+      settingsNameInput.value = tripMeta.name;
+      settingsStartInput.value = tripMeta.startDate;
+      settingsEndInput.value = tripMeta.endDate;
+      settingsCancelBtn.style.display = '';
+    }
+    settingsVeil.style.display = 'flex';
+    requestAnimationFrame(()=> settingsNameInput.focus());
+  }
+
+  function closeSettingsModal(){
+    settingsVeil.style.display = 'none';
+  }
+
+  function finishRenderAfterDaysChange(){
+    ensureIds();
+    currentIndex = pickDefaultIndex(days);
+    scheduleSave();
+    updateTopBar();
+    render();
+    requestAnimationFrame(()=>{
+      const secs = pager.querySelectorAll('.day');
+      if (secs[currentIndex]) secs[currentIndex].scrollIntoView({inline:'start'});
+    });
+  }
+
+  function initializeNewTrip(name, start, end){
+    const newDates = dateRange(start, end);
+    days = newDates.map(dt => blankDay(dt));
+    tripMeta = { name, startDate: start, endDate: end };
+    finishRenderAfterDaysChange();
+  }
+
+  function applyDateChange(name, start, end){
+    const newDates = dateRange(start, end);
+    const existingByDate = {};
+    days.forEach(d => { existingByDate[d.date] = d; });
+    const removed = days.filter(d => !newDates.includes(d.date));
+    const removedWithContent = removed.filter(dayHasContent);
+
+    const apply = ()=>{
+      days = newDates.map(dt => existingByDate[dt] || blankDay(dt));
+      tripMeta = { name, startDate: start, endDate: end };
+      finishRenderAfterDaysChange();
+    };
+
+    if (removedWithContent.length){
+      const list = removedWithContent.map(d => d.title || d.date).join(', ');
+      openConfirm(
+        'These days have content and will be removed: ' + list + '. Continue?',
+        apply
+      );
+    } else {
+      apply();
+    }
+  }
+
+  settingsBtn.addEventListener('click', ()=> openSettingsModal('edit'));
+  settingsCancelBtn.addEventListener('click', closeSettingsModal);
+  settingsSaveBtn.addEventListener('click', ()=>{
+    const name = settingsNameInput.value.trim();
+    const start = settingsStartInput.value;
+    const end = settingsEndInput.value;
+    if (!name || !start || !end || start > end) return;
+
+    if (settingsModalMode === 'setup'){
+      initializeNewTrip(name, start, end);
+    } else {
+      applyDateChange(name, start, end);
+    }
+    closeSettingsModal();
+  });
 
   // ---- Extra row builders ----
   function buildExtraRow(day, ev, extra, ul, di, extrasEl){
@@ -1090,6 +1287,8 @@
   nextBtn.addEventListener('click', ()=> goTo(currentIndex+1));
 
   async function init(){
+    if (READONLY) settingsBtn.style.display = 'none';
+
     // name — plain browser localStorage, per device, no account needed
     try{
       myName = localStorage.getItem(NAME_KEY);
@@ -1101,20 +1300,42 @@
     }
 
     // shared itinerary data — jsonbin.io
+    let needsSetup = false;
     try{
       const record = await loadItinerary();
-      days = (record && record.days && record.days.length) ? record.days : SEED;
-      if (!record || !record.days || !record.days.length){
-        await saveItinerary({days: SEED, lastEditedBy: null, lastEditedAt: Date.now()});
+      if (record && record.days && record.days.length){
+        days = record.days;
+        tripMeta = {
+          name: record.tripName || 'Denver \u2192 Vegas',
+          startDate: record.startDate || days[0].date,
+          endDate: record.endDate || days[days.length - 1].date
+        };
+      } else {
+        needsSetup = true;
       }
     }catch(e){
       console.error('load failed, showing default itinerary', e);
       days = SEED;
+      tripMeta = { name: 'Denver \u2192 Vegas', startDate: SEED[0].date, endDate: SEED[SEED.length-1].date };
       showStatus("Couldn't load latest \u2014 showing default", true, 3000);
+    }
+
+    if (needsSetup){
+      if (READONLY){
+        // nothing to show yet and this viewer can't set it up
+        days = [];
+        tripMeta = { name: 'Trip', startDate: '', endDate: '' };
+        updateTopBar();
+        render();
+        return;
+      }
+      openSettingsModal('setup');
+      return;
     }
 
     ensureIds();
     currentIndex = pickDefaultIndex(days);
+    updateTopBar();
     render();
 
     requestAnimationFrame(()=>{
